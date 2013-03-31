@@ -1,0 +1,8 @@
+/recovery	mtd		recovery
+/boot		mtd		boot
+/data/radio	mtd		radio
+
+/system 	ext4 	/dev/block/mmcblk0p3
+/cache 		ext4 	/dev/block/mmcblk0p2
+/data 		ext4 	/dev/block/mmcblk0p4
+/sdcard		vfat	/dev/block/mmcblk0p1

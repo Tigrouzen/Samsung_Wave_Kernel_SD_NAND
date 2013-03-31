@@ -1,0 +1,63 @@
+#!/ics_rec_init/sbin/busybox sh
+
+export _PATH="$PATH"
+export PATH=/
+
+# set busybox location, save busybox as we will move directories
+/ics_rec_init/sbin/busybox cp /ics_rec_init/sbin/recovery /busybox
+BB="/busybox"
+
+# initialize working dir and log
+$BB cd /
+$BB date >>boot.txt
+exec >>boot.txt 2>&1
+
+$BB rm init
+$BB mkdir proc
+$BB mkdir sys
+$BB mkdir system 
+$BB mkdir cache
+$BB mkdir data 
+$BB mkdir /dev
+$BB mkdir /dev/block
+$BB mknod /dev/block/zram0 b 253 0 
+$BB mknod /dev/block/mmcblk0 b 179 0
+$BB mknod /dev/block/mmcblk0p1 b 179 1
+$BB mknod /dev/block/mmcblk0p2 b 179 2
+$BB mknod /dev/block/mmcblk0p3 b 179 3
+$BB mknod /dev/block/mmcblk0p4 b 179 4
+$BB mount -t proc proc /proc
+$BB mount -t sysfs sysfs /sys
+
+$BB mv /files/init /
+
+$BB sleep 1
+$BB mount -t ext4 -o noatime,nodiratime,nosuid,nodev,barrier=0,noauto_da_alloc,data=writeback /dev/block/mmcblk0p4 /data
+$BB mount -t ext4 -o noatime,nodiratime,nosuid,nodev,barrier=0,noauto_da_alloc,data=writeback /dev/block/mmcblk0p2 /cache
+$BB mount -t ext4 -o noatime,nodiratime,barrier=0,noauto_da_alloc,data=writeback /dev/block/mmcblk0p3 /system
+$BB mkdir -p /data/radio
+$BB chmod -R 0777 /data/radio
+$BB chown radio:radio /data/radio
+$BB mkdir /data/radio/.efs_private
+$BB chown radio:radio /data/radio/.efs_private
+$BB mkdir -p /data/local/devil 
+$BB echo 500000000 > /sys/block/zram0/disksize
+$BB mkswap /dev/block/zram0
+$BB swapon /dev/block/zram0
+$BB cat /proc/cmdline
+if $BB grep -q bootmode=2 /proc/cmdline ; then
+    $BB rm -rf /etc
+    $BB mv /ics_rec_init/* /
+    else
+    $BB rm -rf /etc
+    $BB mv /ics_init/* /
+fi
+#$BB umount /sys
+#$BB umount /proc
+$BB rm -rf /files
+$BB rm -rf /ics_init
+$BB rm -rf /ics_rec_init
+#$BB rm -fr /dev/*
+$BB rm /busybox
+export PATH="${_PATH}"
+exec /init

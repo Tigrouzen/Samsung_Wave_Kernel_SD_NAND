@@ -1,0 +1,114 @@
+#!/sbin/sh
+umount /data
+umount /cache
+umount /system
+if fdisk -l /dev/block/mmcblk0 | grep "/dev/block/mmcblk0p8"
+
+then
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+8
+w
+EOF
+fi
+if fdisk -l /dev/block/mmcblk0 | grep "/dev/block/mmcblk0p7"
+
+then
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+7
+w
+EOF
+fi
+if fdisk -l /dev/block/mmcblk0 | grep "/dev/block/mmcblk0p6"
+
+then
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+6
+w
+EOF
+fi
+if fdisk -l /dev/block/mmcblk0 | grep "/dev/block/mmcblk0p5"
+
+then
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+5
+w
+EOF
+fi
+if fdisk -l /dev/block/mmcblk0 | grep "/dev/block/mmcblk0p4"
+
+then
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+4
+w
+EOF
+fi
+if fdisk -l /dev/block/mmcblk0 | grep "/dev/block/mmcblk0p3"
+
+then
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+3
+w
+EOF
+fi
+if fdisk -l /dev/block/mmcblk0 | grep "/dev/block/mmcblk0p2"
+
+then
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+2
+w
+EOF
+fi
+if fdisk -l /dev/block/mmcblk0 | grep "/dev/block/mmcblk0p1"
+
+then
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+1
+w
+EOF
+fi
+
+fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+n
+p
+1
+
++10M
+n
+p
+2
+
++360M
+n
+p
+3
+
+
+w
+EOF
+mkfs.ext4 -b 4096 /dev/block/mmcblk0p1
+mkfs.ext4 -b 4096 /dev/block/mmcblk0p2
+mkfs.ext4 -b 4096 /dev/block/mmcblk0p3
+tune2fs -o journal_data_writeback /dev/block/mmcblk0p1
+tune2fs -O ^has_journal /dev/block/mmcblk0p1
+tune2fs -o journal_data_writeback /dev/block/mmcblk0p2
+tune2fs -O ^has_journal /dev/block/mmcblk0p2
+tune2fs -o journal_data_writeback /dev/block/mmcblk0p3
+tune2fs -O ^has_journal /dev/block/mmcblk0p3
+mount -t ext4 -o noatime,nodiratime,barrier=0,noauto_da_alloc,data=writeback /dev/block/mmcblk0p1 /cache
+mount -t ext4 -o noatime,nodiratime,barrier=0,noauto_da_alloc,data=writeback /dev/block/mmcblk0p2 /system
