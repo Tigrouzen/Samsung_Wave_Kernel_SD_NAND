@@ -57,10 +57,6 @@
 #include <linux/wlan_plat.h>
 #include <linux/mfd/wm8994/wm8994_pdata.h>
 
-#ifdef CONFIG_ANDROID_PMEM
-#include <linux/android_pmem.h>
-#endif
-
 #include <plat/media.h>
 #include <mach/media.h>
 
@@ -118,9 +114,6 @@ EXPORT_SYMBOL(sec_set_param_value);
 
 void (*sec_get_param_value)(int idx, void *value);
 EXPORT_SYMBOL(sec_get_param_value);
-
-// local prototype
-static void fsa9480_charger_cb(bool attached);
 
 #define KERNEL_REBOOT_MASK      0xFFFFFFFF
 #define REBOOT_MODE_FAST_BOOT		7
@@ -288,10 +281,6 @@ static struct s3cfb_lcd s6e63m0 = {
 						 (CONFIG_FB_S3C_NUM_OVLY_WIN * \
 						  CONFIG_FB_S3C_NUM_BUF_OVLY_WIN)))
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_JPEG (4096 * SZ_1K)
-//#define  S5PV210_ANDROID_PMEM_MEMSIZE_PMEM (2048 * SZ_1K)
-//#define  S5PV210_ANDROID_PMEM_MEMSIZE_PMEM_GPU1 (3000 * SZ_1K)
-//#define  S5PV210_ANDROID_PMEM_MEMSIZE_PMEM_ADSP (1500 * SZ_1K)
-//#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_TEXTSTREAM (3000 * SZ_1K)
 
 static struct s5p_media_device wave_media_devs[] = {
 	[0] = {
@@ -336,36 +325,6 @@ static struct s5p_media_device wave_media_devs[] = {
 		.memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMD,
 		.paddr = 0,
 	},
-#ifdef CONFIG_ANDROID_PMEM
-	[7] = {
-		.id = S5P_MDEV_PMEM,
-		.name = "pmem",
-		.bank = 0,
-		.memsize = S5PV210_ANDROID_PMEM_MEMSIZE_PMEM,
-		.paddr = 0,
-	},
-	[8] = {
-		.id = S5P_MDEV_PMEM_GPU1,
-		.name = "pmem_gpu1",
-		.bank = 0,
-		.memsize = S5PV210_ANDROID_PMEM_MEMSIZE_PMEM_GPU1,
-		.paddr = 0,
-	},
-	[9] = {
-		.id = S5P_MDEV_PMEM_ADSP,
-		.name = "pmem_adsp",
-		.bank = 0,
-		.memsize = S5PV210_ANDROID_PMEM_MEMSIZE_PMEM_ADSP,
-		.paddr = 0,
-		},
-	[10] = {
-		.id = S5P_MDEV_TEXSTREAM,
-		.name = "s3c_bc",
-		.bank = 1,
-		.memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_TEXTSTREAM,
-		.paddr = 0,
-	},	
-#endif
 };
 
 #ifdef CONFIG_CPU_FREQ
@@ -477,8 +436,8 @@ static struct regulator_consumer_supply buck4_consumer[] = {
 static struct regulator_init_data wave_ldo2_data = {
 	.constraints	= {
 		.name		= "VALIVE_1.2V",
-		.min_uV		= 1200000,
-		.max_uV		= 1200000,
+		.min_uV		= 1100000,
+		.max_uV		= 1100000,
 		.apply_uV	= 1,
 		.always_on	= 1,
 		.state_mem	= {
@@ -490,8 +449,8 @@ static struct regulator_init_data wave_ldo2_data = {
 static struct regulator_init_data wave_ldo3_data = {
 	.constraints	= {
 		.name		= "VUSB_1.1V",
-		.min_uV		= 1100000,
-		.max_uV		= 1100000,
+		.min_uV		= 1000000,
+		.max_uV		= 1000000,
 		.apply_uV	= 1,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 		.state_mem	= {
@@ -505,8 +464,8 @@ static struct regulator_init_data wave_ldo3_data = {
 static struct regulator_init_data wave_ldo4_data = {
 	.constraints	= {
 		.name		= "VADC_3.3V",
-		.min_uV		= 3300000,
-		.max_uV		= 3300000,
+		.min_uV		= 3200000,
+		.max_uV		= 3200000,
 		.apply_uV	= 1,
 		.always_on	= 1,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
@@ -520,8 +479,8 @@ static struct regulator_init_data wave_ldo4_data = {
 static struct regulator_init_data wave_ldo5_data = {
 	.constraints	= {
 		.name		= "VTF_2.8V",
-		.min_uV		= 2800000,
-		.max_uV		= 2800000,
+		.min_uV		= 2700000,
+		.max_uV		= 2700000,
 		.apply_uV	= 1,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 		.state_mem	= {
@@ -536,8 +495,8 @@ static struct regulator_init_data wave_ldo5_data = {
 static struct regulator_init_data wave_ldo7_data = {
 	.constraints	= {
 		.name		= "VLCD_1.8V",
-		.min_uV		= 1800000,
-		.max_uV		= 1800000,
+		.min_uV		= 1700000,
+		.max_uV		= 1700000,
 		.apply_uV	= 1,
 		.always_on	= 0,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
@@ -552,8 +511,8 @@ static struct regulator_init_data wave_ldo7_data = {
 static struct regulator_init_data wave_ldo8_data = {
 	.constraints	= {
 		.name		= "VUSB_3.3V",
-		.min_uV		= 3300000,
-		.max_uV		= 3300000,
+		.min_uV		= 3200000,
+		.max_uV		= 3200000,
 		.apply_uV	= 1,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 		.state_mem	= {
@@ -652,8 +611,8 @@ static struct regulator_init_data wave_ldo15_data = {
 static struct regulator_init_data wave_ldo16_data = {
 	.constraints	= {
 		.name		= "VGA_DVDD_1.8V",
-		.min_uV		= 1800000,
-		.max_uV		= 1800000,
+		.min_uV		= 1700000,
+		.max_uV		= 1700000,
 		.apply_uV	= 1,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 		.state_mem	= {
@@ -669,6 +628,7 @@ static struct regulator_init_data wave_ldo17_data = {
 		.name		= "VCC_3.0V_LCD",
 		.min_uV		= 2800000,
 		.max_uV		= 3000000,
+		/* service manuals of S8500 & S8530 mark it as 3.2V but there are known configs of 3.0 and 2.8 */
 		.apply_uV	= 1,
 		.always_on	= 0,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
@@ -684,7 +644,7 @@ static struct regulator_init_data wave_buck1_data = {
 	.constraints	= {
 		.name		= "VDD_ARM",
 		.min_uV		= 750000,
-		.max_uV		= 1500000,
+		.max_uV		= 1450000,
 		.apply_uV	= 1,
 		.valid_ops_mask	= REGULATOR_CHANGE_VOLTAGE |
 				  REGULATOR_CHANGE_STATUS,
@@ -702,7 +662,7 @@ static struct regulator_init_data wave_buck2_data = {
 	.constraints	= {
 		.name		= "VDD_INT",
 		.min_uV		= 750000,
-		.max_uV		= 1500000,
+		.max_uV		= 1450000,
 		.apply_uV	= 1,
 		.valid_ops_mask	= REGULATOR_CHANGE_VOLTAGE |
 				  REGULATOR_CHANGE_STATUS,
@@ -719,8 +679,8 @@ static struct regulator_init_data wave_buck2_data = {
 static struct regulator_init_data wave_buck3_data = {
 	.constraints	= {
 		.name		= "VCC_1.8V",
-		.min_uV		= 1800000,
-		.max_uV		= 1800000,
+		.min_uV		= 1700000,
+		.max_uV		= 1700000,
 		.apply_uV	= 1,
 		.always_on	= 1,
 	},
@@ -1779,9 +1739,7 @@ static int s5ka3dfx_power_on(void)
 		pr_err("Failed camera_ldo_en\n");
 		return -EINVAL;
 	}
-
 	mdelay(1);
-
 
 	/* CAM_VGA_nSTBY HIGH */
 	gpio_direction_output(GPIO_CAM_VGA_nSTBY, 0);
@@ -2042,7 +2000,6 @@ static void mxt224_init(void)
 	return;
 }
 
-
 static struct i2c_board_info i2c_devs5[] __initdata = {
 #if defined(CONFIG_SAMSUNG_FASCINATE)
 	{
@@ -2115,10 +2072,6 @@ static void fsa9480_cardock_cb(bool attached)
 		switch_set_state(&switch_dock, 2);
 	else
 		switch_set_state(&switch_dock, 0);
-
-	set_cable_status = attached ? CABLE_TYPE_AC : CABLE_TYPE_NONE;
-	if (charger_callbacks && charger_callbacks->set_cable)
-		charger_callbacks->set_cable(charger_callbacks, set_cable_status);
 }
 
 static void fsa9480_reset_cb(void)
