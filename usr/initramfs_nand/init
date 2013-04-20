@@ -42,7 +42,7 @@ $BB chown radio:radio /data/radio
 $BB mkdir /data/radio/.efs_private
 $BB chown radio:radio /data/radio/.efs_private
 $BB mkdir -p /data/local/devil 
-$BB echo 500000000 > /sys/block/zram0/disksize
+$BB echo 250000000 > /sys/block/zram0/disksize
 $BB mkswap /dev/block/zram0
 $BB swapon /dev/block/zram0
 $BB cat /proc/cmdline
@@ -50,9 +50,16 @@ if $BB grep -q bootmode=2 /proc/cmdline ; then
     $BB rm -rf /etc
     $BB mv /ics_rec_init/* /
     else
+#Bigmem
+if $BB grep -q bootmode=10 /proc/cmdline ; then
+   $BB echo 3 > /sys/kernel/bigmem/enable
+   $BB touch /data/local/devil/bigmem
+   $BB echo 3 > /data/local/devil/bigmem
+fi
     $BB rm -rf /etc
     $BB mv /ics_init/* /
 fi
+
 #$BB umount /sys
 #$BB umount /proc
 $BB rm -rf /files
