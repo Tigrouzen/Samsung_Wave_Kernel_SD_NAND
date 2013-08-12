@@ -21,6 +21,7 @@
 #include <linux/i2c-gpio.h>
 #include <linux/regulator/consumer.h>
 #include <linux/mfd/max8998.h>
+#include <linux/i2c/ak8973.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/usb/ch9.h>
@@ -57,6 +58,7 @@
 #include <linux/wlan_plat.h>
 #include <linux/mfd/wm8994/wm8994_pdata.h>
 
+
 #include <plat/media.h>
 #include <mach/media.h>
 
@@ -86,22 +88,13 @@
 #include <plat/regs-otg.h>
 
 #include <linux/gp2a.h>
-
-#include <linux/i2c/ak8973.h>
 #include <../../../drivers/video/samsung/s3cfb.h>
 #include <linux/sec_jack.h>
 #include <linux/input/mxt224.h>
 #include <linux/mfd/max8998.h>
 #include <linux/switch.h>
 
-#ifdef CONFIG_KERNEL_DEBUG_SEC
-#include <linux/kernel_sec_common.h>
-#endif
-
 #include "wave.h"
-
-#undef pr_debug
-#define pr_debug pr_info
 
 struct class *sec_class;
 EXPORT_SYMBOL(sec_class);
@@ -114,6 +107,9 @@ EXPORT_SYMBOL(sec_set_param_value);
 
 void (*sec_get_param_value)(int idx, void *value);
 EXPORT_SYMBOL(sec_get_param_value);
+
+// local prototype
+static void fsa9480_charger_cb(bool attached);
 
 #define KERNEL_REBOOT_MASK      0xFFFFFFFF
 #define REBOOT_MODE_FAST_BOOT		7
@@ -134,26 +130,6 @@ static struct sk_buff *wlan_static_skb[WLAN_SKB_BUF_NUM];
 struct wifi_mem_prealloc {
 	void *mem_ptr;
 	unsigned long size;
-};
-
-static int wave_notifier_call(struct notifier_block *this,
-					unsigned long code, void *_cmd)
-{
-	int mode = REBOOT_MODE_NONE;
-
-	if ((code == SYS_RESTART) && _cmd) {
-		if (!strcmp((char *)_cmd, "recovery"))
-			mode = 2; // It's not REBOOT_MODE_RECOVERY, blame Samsung
-		else
-			mode = REBOOT_MODE_NONE;
-	}
-	__raw_writel(mode, S5P_INFORM6);
-
-	return NOTIFY_DONE;
-}
-
-static struct notifier_block wave_reboot_notifier = {
-	.notifier_call = wave_notifier_call,
 };
 
 static void uart_switch_init(void)
@@ -224,15 +200,6 @@ static struct s3c2410_uartcfg wave_uartcfgs[] __initdata = {
 		.ulcon		= S5PV210_ULCON_DEFAULT,
 		.ufcon		= S5PV210_UFCON_DEFAULT,
 	},
-#if !defined(CONFIG_FIQ_DEBUGGER) && 0
-	{
-		.hwport		= 2,
-		.flags		= 0,
-		.ucon		= S5PV210_UCON_DEFAULT,
-		.ulcon		= S5PV210_ULCON_DEFAULT,
-		.ufcon		= S5PV210_UFCON_DEFAULT,
-	},
-#endif
 	{
 		.hwport		= 3,
 		.flags		= 0,
@@ -271,10 +238,16 @@ static struct s3cfb_lcd s6e63m0 = {
 	},
 };
 
-#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0 (11264 * SZ_1K)
+#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0_BM (0 * SZ_1K)
+#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC2_BM (0 * SZ_1K)
+#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0_XL (0 * SZ_1K)
+#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1_XL (0 * SZ_1K)
+
+#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0 (4000 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC2 (0 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0 (11264 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1 (11264 * SZ_1K)
+
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMD (S5PV210_LCD_WIDTH * \
 					     S5PV210_LCD_HEIGHT * 4 * \
 					     (CONFIG_FB_S3C_NR_BUFFERS + \
@@ -378,12 +351,6 @@ static struct regulator_consumer_supply ldo3_consumer[] = {
 	REGULATOR_SUPPLY("pd_io", "s3c-usbgadget")
 };
 
-#ifndef CONFIG_SAMSUNG_FASCINATE
-static struct regulator_consumer_supply ldo5_consumer[] = {
-	REGULATOR_SUPPLY("vmmc", NULL),
-};
-#endif
-
 static struct regulator_consumer_supply ldo7_consumer[] = {
 	{	.supply	= "vlcd", },
 };
@@ -474,23 +441,6 @@ static struct regulator_init_data wave_ldo4_data = {
 		},
 	},
 };
-
-#ifndef CONFIG_SAMSUNG_FASCINATE
-static struct regulator_init_data wave_ldo5_data = {
-	.constraints	= {
-		.name		= "VTF_2.8V",
-		.min_uV		= 2700000,
-		.max_uV		= 2700000,
-		.apply_uV	= 1,
-		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
-		.state_mem	= {
-			.disabled = 1,
-		},
-	},
-	.num_consumer_supplies	= ARRAY_SIZE(ldo5_consumer),
-	.consumer_supplies	= ldo5_consumer,
-};
-#endif
 
 static struct regulator_init_data wave_ldo7_data = {
 	.constraints	= {
@@ -649,7 +599,7 @@ static struct regulator_init_data wave_buck1_data = {
 		.valid_ops_mask	= REGULATOR_CHANGE_VOLTAGE |
 				  REGULATOR_CHANGE_STATUS,
 		.state_mem	= {
-			.uV	= 1250000,
+			.uV	= ARMBOOT,
 			.mode	= REGULATOR_MODE_NORMAL,
 			.disabled = 1,
 		},
@@ -667,7 +617,7 @@ static struct regulator_init_data wave_buck2_data = {
 		.valid_ops_mask	= REGULATOR_CHANGE_VOLTAGE |
 				  REGULATOR_CHANGE_STATUS,
 		.state_mem	= {
-			.uV	= 1100000,
+			.uV	= INTBOOT,
 			.mode	= REGULATOR_MODE_NORMAL,
 			.disabled = 1,
 		},
@@ -705,9 +655,6 @@ static struct max8998_regulator_data wave_regulators[] = {
 	{ MAX8998_LDO2,  &wave_ldo2_data },
 	{ MAX8998_LDO3,  &wave_ldo3_data },
 	{ MAX8998_LDO4,  &wave_ldo4_data },
-#ifndef CONFIG_SAMSUNG_FASCINATE
-	{ MAX8998_LDO5,  &wave_ldo5_data },
-#endif
 	{ MAX8998_LDO7,  &wave_ldo7_data },
 	{ MAX8998_LDO8,  &wave_ldo8_data },
 	{ MAX8998_LDO9,  &wave_ldo9_data },
@@ -819,6 +766,7 @@ static struct max8998_charger_data wave_charger = {
 	.adc_array_size		= ARRAY_SIZE(temper_table),
 };
 
+
 static struct max8998_platform_data max8998_pdata = {
 	.num_regulators = ARRAY_SIZE(wave_regulators),
 	.regulators     = wave_regulators,
@@ -842,7 +790,7 @@ struct platform_device sec_device_dpram = {
 	.id	= -1,
 };
 
-static void panel_cfg_gpio(struct platform_device *pdev)
+static void tl2796_cfg_gpio(struct platform_device *pdev)
 {
 	int i;
 
@@ -858,6 +806,7 @@ static void panel_cfg_gpio(struct platform_device *pdev)
 	for (i = 0; i < 4; i++)
 		s3c_gpio_cfgpin(S5PV210_GPF3(i), S3C_GPIO_SFN(2));
 
+
 	/* mDNIe SEL: why we shall write 0x2 ? */
 #ifdef CONFIG_FB_S3C_MDNIE
 	writel(0x1, S5P_MDNIE_SEL);
@@ -867,7 +816,7 @@ static void panel_cfg_gpio(struct platform_device *pdev)
 
 		s3c_gpio_setpull(GPIO_OLED_ID, S3C_GPIO_PULL_NONE);
 		s3c_gpio_setpull(GPIO_DIC_ID, S3C_GPIO_PULL_NONE);
-	s3c_gpio_setpull(GPIO_OLED_DET, S3C_GPIO_PULL_NONE);
+		s3c_gpio_setpull(GPIO_OLED_DET, S3C_GPIO_PULL_NONE);
 }
 
 void lcd_cfg_gpio_early_suspend(void)
@@ -908,11 +857,11 @@ EXPORT_SYMBOL(lcd_cfg_gpio_early_suspend);
 
 void lcd_cfg_gpio_late_resume(void)
 {
-
+	/* there's panel_cfg_gpio called by s3cfb driver after this so no need to cfg anything */
 }
 EXPORT_SYMBOL(lcd_cfg_gpio_late_resume);
 
-static int panel_reset_lcd(struct platform_device *pdev)
+static int tl2796_reset_lcd(struct platform_device *pdev)
 {
 	int err;
 
@@ -924,13 +873,13 @@ static int panel_reset_lcd(struct platform_device *pdev)
 	}
 
 	gpio_direction_output(GPIO_MLCD_RST, 1);
-	msleep(25);
+	msleep(10);
 
 	gpio_set_value(GPIO_MLCD_RST, 0);
 	msleep(10);
 
 	gpio_set_value(GPIO_MLCD_RST, 1);
-	msleep(150);
+	msleep(10);
 
 	gpio_free(GPIO_MLCD_RST);
 
@@ -938,6 +887,7 @@ static int panel_reset_lcd(struct platform_device *pdev)
 }
 
 #define LCD_BUS_NUM     3
+
 
 
 static struct s3c_platform_fb tl2796_data __initdata = {
@@ -948,14 +898,14 @@ static struct s3c_platform_fb tl2796_data __initdata = {
 	.swap		= FB_SWAP_HWORD | FB_SWAP_WORD,
 
 	.lcd = &s6e63m0,
-	.cfg_gpio	= panel_cfg_gpio,
-	.reset_lcd	= panel_reset_lcd,
+	.cfg_gpio	= tl2796_cfg_gpio,
+	.reset_lcd	= tl2796_reset_lcd,
 };
 
-static struct spi_board_info tl2796_spi_board_info[] __initdata = {
+static struct spi_board_info spi_board_info[] __initdata = {
 	{
 		.modalias	= "tl2796",
-		.platform_data	= &wave_tl2796_panel_data,
+		.platform_data	= &wave_panel_data,
 		.max_speed_hz	= 1200000,
 		.bus_num	= LCD_BUS_NUM,
 		.chip_select	= 0,
@@ -964,19 +914,20 @@ static struct spi_board_info tl2796_spi_board_info[] __initdata = {
 	},
 };
 
-static struct spi_gpio_platform_data wave_display_spi_gpio_data = {
+//common spi bus description for all LCD ICs
+static struct spi_gpio_platform_data tl2796_spi_gpio_data = {
 	.sck	= GPIO_DISPLAY_CLK,
 	.mosi	= GPIO_DISPLAY_SI,
-	.miso	= -1,
+	.miso	= SPI_GPIO_NO_MISO,
 	.num_chipselect = 2,
 };
 
-static struct platform_device s3c_display_spi_gpio = {
+static struct platform_device s3c_device_spi_gpio = {
 	.name	= "spi_gpio",
 	.id	= LCD_BUS_NUM,
 	.dev	= {
 		.parent		= &s3c_device_fb.dev,
-		.platform_data	= &wave_display_spi_gpio_data,
+		.platform_data	= &tl2796_spi_gpio_data,
 	},
 };
 
@@ -1039,8 +990,8 @@ static struct platform_device wave_s3c_device_i2c7 = {
 	.id			= 7,
 	.dev.platform_data	= &i2c7_platdata,
 };
+
 // For FM radio
-#if defined (CONFIG_SAMSUNG_GALAXYS) || defined (CONFIG_SAMSUNG_GALAXYSB) || defined (CONFIG_MACH_WAVE)
 static  struct  i2c_gpio_platform_data  i2c8_platdata = {
         .sda_pin                = GPIO_FM_SDA_28V,
         .scl_pin                = GPIO_FM_SCL_28V,
@@ -1055,7 +1006,7 @@ static struct platform_device s3c_device_i2c8 = {
         .id                                     = 8,
         .dev.platform_data      = &i2c8_platdata,
 };
-#endif
+
 
 static struct i2c_gpio_platform_data i2c11_platdata = {
 	.sda_pin                = GPIO_ALS_SDA_28V,
@@ -1087,22 +1038,6 @@ static struct platform_device s3c_device_i2c12 = {
 	.dev.platform_data	= &i2c12_platdata,
 };
 
-#if defined (CONFIG_SAMSUNG_CAPTIVATE)
-static struct i2c_gpio_platform_data	i2c13_platdata = {
-    .sda_pin		= GPIO_A1026_SDA,
-    .scl_pin		= GPIO_A1026_SCL,
-    .udelay			= 1,	/* 250KHz */
-    .sda_is_open_drain	= 0,
-    .scl_is_open_drain	= 0,
-    .scl_is_output_only	= 0,
-  };
-static struct platform_device s3c_device_i2c13 = {
-  	.name				= "i2c-gpio",
-  	.id					= 13,
-  	.dev.platform_data	= &i2c13_platdata,
-  };
-#endif
-
 static struct gpio_keys_button wave_gpio_keys_table[] = {
 	{
 		.code 		= KEY_BACK,
@@ -1126,7 +1061,6 @@ static struct platform_device wave_device_gpiokeys = {
 		.platform_data = &wave_gpio_keys_data,
 	},
 };
-
 #ifdef CONFIG_S5P_ADC
 static struct s3c_adc_mach_info s3c_adc_platform __initdata = {
 	/* s5pc110 support 12-bit resolution */
@@ -1146,22 +1080,9 @@ static bool wm8994_mic_bias;
 static bool jack_mic_bias;
 static void set_shared_mic_bias(void)
 {
-#if defined(CONFIG_SAMSUNG_CAPTIVATE)
-	gpio_set_value(GPIO_MICBIAS_EN, wm8994_mic_bias);
-    gpio_set_value(GPIO_EARPATH_SEL, jack_mic_bias);
-	gpio_set_value(GPIO_EAR_MICBIAS_EN, jack_mic_bias);
-#elif defined(CONFIG_SAMSUNG_VIBRANT)
-    if((HWREV == 0x0A) || (HWREV == 0x0C) || (HWREV == 0x0D) || (HWREV == 0x0E) ) //0x0A:00, 0x0C:00, 0x0D:01, 0x0E:05
-        gpio_set_value(GPIO_MICBIAS_EN, wm8994_mic_bias || jack_mic_bias);
-    else {
-        gpio_set_value(GPIO_MICBIAS_EN2, jack_mic_bias);
-        gpio_set_value(GPIO_MICBIAS_EN, wm8994_mic_bias);
-    }
-    gpio_set_value(GPIO_EARPATH_SEL, jack_mic_bias);
-#else
 	gpio_set_value(GPIO_MICBIAS_EN, wm8994_mic_bias || jack_mic_bias);
     gpio_set_value(GPIO_EARPATH_SEL, wm8994_mic_bias || jack_mic_bias);
-#endif
+	gpio_direction_output(GPIO_PCM_SEL, wm8994_mic_bias || jack_mic_bias);
 }
 
 static void wm8994_set_mic_bias(bool on)
@@ -1190,7 +1111,6 @@ static struct wm8994_platform_data wm8994_pdata = {
 	.set_mic_bias = wm8994_set_mic_bias,
 };
 
-#if defined(CONFIG_VIDEO_S5KA3DFX) || defined(CONFIG_VIDEO_CE147)
 
 static struct regulator *cam_isp_core_regulator;/*buck4*/
 static struct regulator *cam_af_regulator;/*11*/
@@ -1287,7 +1207,6 @@ static int camera_ldo_en(bool en)
 	if (!en)
 		goto off;
 
-	/* Turn CAM_ISP_CORE_1.2V(VDD_REG) on BUCK 4*/
 	err = regulator_enable(cam_isp_core_regulator);
 	if (err) {
 		pr_err("Failed to enable regulator cam_isp_core\n");
@@ -1295,7 +1214,6 @@ static int camera_ldo_en(bool en)
 	}
 	mdelay(1);
 
-	/* Turn CAM_AF_2.8V or 3.0V on ldo 11*/
 	err = regulator_enable(cam_af_regulator);
 	if (err) {
 		pr_err("Failed to enable regulator cam_af\n");
@@ -1303,7 +1221,6 @@ static int camera_ldo_en(bool en)
 	}
 	udelay(50);
 
-	/*ldo 12*/
 	err = regulator_enable(cam_sensor_core_regulator);
 	if (err) {
 		pr_err("Failed to enable regulator cam_sensor\n");
@@ -1392,9 +1309,7 @@ off:
 	}
 	return result;
 }
-#endif
 
-#ifdef CONFIG_VIDEO_CE147
 /*
  * Guide for Camera Configuration for Jupiter board
  * ITU CAM CH A: CE147
@@ -1420,6 +1335,7 @@ static void ce147_init(void)
 static int ce147_power_on(void)
 {	
 	int err;
+	bool TRUE = true;
 
 	if (camera_regulator_init()) {
 			pr_err("Failed to initialize camera regulators\n");
@@ -1510,6 +1426,7 @@ static int ce147_power_on(void)
 static int ce147_power_off(void)
 {
 	int err;
+	bool FALSE = false;
 
 	/* GPIO_CAM_ANALOG_EN - GPJ1(0) */
 	err = gpio_request(GPIO_CAM_ANALOG_EN, "GPIO_CAM_ANALOG_EN");
@@ -1672,9 +1589,7 @@ static struct s3c_platform_camera ce147 = {
 	.initialized	= 0,
 	.cam_power	= ce147_power_en,
 };
-#endif
 
-#ifdef CONFIG_VIDEO_S5KA3DFX
 /* External camera module setting */
 static DEFINE_MUTEX(s5ka3dfx_lock);
 static bool s5ka3dfx_powered_on;
@@ -1747,6 +1662,7 @@ static int s5ka3dfx_power_on(void)
 
 	mdelay(1);
 
+//bada enable clocks here
 	/* Mclk enable */
 	s3c_gpio_cfgpin(GPIO_CAM_MCLK, S3C_GPIO_SFN(0x02));
 	udelay(500);
@@ -1859,7 +1775,7 @@ static struct s3c_platform_camera s5ka3dfx = {
 	.initialized	= 0,
 	.cam_power	= s5ka3dfx_power_en,
 };
-#endif
+
 
 /* Interface setting */
 static struct s3c_platform_fimc fimc_plat_lsi = {
@@ -1906,25 +1822,9 @@ static void mxt224_power_off(void)
 #define MXT224_MAX_MT_FINGERS 5
 
 static u8 t7_config[] = {GEN_POWERCONFIG_T7,
-				64, 255, 50};
+64, 255, 50};
 static u8 t8_config[] = {GEN_ACQUISITIONCONFIG_T8,
 7, 0, 5, 0, 0, 0, 9, 35};
-
-static u8 t9_s8530_config[] = {TOUCH_MULTITOUCHSCREEN_T9, // for Wave2
-139,
-0, 0, //xorigin, yorigin
-19,11, //xsize, ysize
-0, 33, 30, 2, 7, 0, 3, 1,
-46, MXT224_MAX_MT_FINGERS,
-5, 40,
-10, //amphyst
-0, 0, //xrange, yrange
-0, 0, 0, 0, 0, 0,
-143, 40, //xedgectrl, dist
-143, 80, //yedgectrl, dist
-18//jumplimit
-};
-
 static u8 t9_s8500_config[] = {TOUCH_MULTITOUCHSCREEN_T9, // for Wave1
 139,
 0, 0, //xorigin, yorigin
@@ -1941,16 +1841,15 @@ static u8 t9_s8500_config[] = {TOUCH_MULTITOUCHSCREEN_T9, // for Wave1
 };
 
 static u8 t18_config[] = {SPT_COMCONFIG_T18,
-				0, 1};
+0, 1};
 static u8 t20_config[] = {PROCI_GRIPFACESUPPRESSION_T20,
-				7, 0, 0, 0, 0, 0, 0, 80, 40, 4, 35, 10};
+7, 0, 0, 0, 0, 0, 0, 80, 40, 4, 35, 10};
 static u8 t22_config[] = {PROCG_NOISESUPPRESSION_T22,
-				5, 0, 0, 0, 0, 0, 0, 3, 30, 0, 0, 29, 34, 39,
-				49, 58, 3};
+5, 0, 0, 0, 0, 0, 0, 3, 30, 0, 0, 29, 34, 39,
+49, 58, 3};
 static u8 t28_config[] = {SPT_CTECONFIG_T28,
-				1, 0, 3, 16, 63, 60};
+1, 0, 3, 16, 63, 60};
 static u8 end_config[] = {RESERVED_T255};
-
 static const u8 *mxt224_config[] = {
 	t7_config,
 	t8_config,
@@ -1982,22 +1881,15 @@ static struct mxt224_platform_data mxt224_data = {
 /* I2C2 */
 static struct i2c_board_info i2c_devs2[] __initdata = {
 	{
-#if defined(CONFIG_SAMSUNG_GALAXYSB) // ffosilva : OK
-		I2C_BOARD_INFO(MXT224_DEV_NAME, 0x4a),
-		.platform_data = &mxt224_data,
-		.irq = IRQ_EINT_GROUP(3, 3),
-#else
 		I2C_BOARD_INFO(MXT224_DEV_NAME, 0x4a),
 		.platform_data = &mxt224_data,
 		.irq = IRQ_EINT_GROUP(18, 5),
-#endif
 	},
 };
 
 static void mxt224_init(void)
 {
 		mxt224_config[2] = t9_s8500_config;
-	return;
 }
 
 static struct i2c_board_info i2c_devs5[] __initdata = {
@@ -2049,17 +1941,17 @@ static void fsa9480_deskdock_cb(bool attached)
 {
 	struct usb_gadget *gadget = platform_get_drvdata(&s3c_device_usbgadget);
 
-    if (attached)
-      switch_set_state(&switch_dock, 1);
-    else
-      switch_set_state(&switch_dock, 0);
+	if (attached)
+		switch_set_state(&switch_dock, 1);
+	else
+		switch_set_state(&switch_dock, 0);
 
-    if (gadget) {
-      if (attached)
-        usb_gadget_vbus_connect(gadget);
-      else
-        usb_gadget_vbus_disconnect(gadget);
-    }
+	if (gadget) {
+		if (attached)
+			usb_gadget_vbus_connect(gadget);
+		else
+			usb_gadget_vbus_disconnect(gadget);
+	}
 
 	set_cable_status = attached ? CABLE_TYPE_USB : CABLE_TYPE_NONE;
 	if (charger_callbacks && charger_callbacks->set_cable)
@@ -2177,67 +2069,6 @@ static struct platform_device ram_console_device = {
 	.resource = ram_console_resource,
 };
 
-#ifdef CONFIG_ANDROID_PMEM
-static struct android_pmem_platform_data pmem_pdata = {
-	.name = "pmem",
-	.no_allocator = 1,
-	.cached = 1,
-	.start = 0,
-	.size = 0,
-};
-
-static struct android_pmem_platform_data pmem_gpu1_pdata = {
-	.name = "pmem_gpu1",
-	.no_allocator = 1,
-	.cached = 1,
-	.buffered = 1,
-	.start = 0,
-	.size = 0,
-};
-
-static struct android_pmem_platform_data pmem_adsp_pdata = {
-	.name = "pmem_adsp",
-	.no_allocator = 1,
-	.cached = 1,
-	.buffered = 1,
-	.start = 0,
-	.size = 0,
-};
-
-static struct platform_device pmem_device = {
-	.name = "android_pmem",
-	.id = 0,
-	.dev = { .platform_data = &pmem_pdata },
-};
-
-static struct platform_device pmem_gpu1_device = {
-	.name = "android_pmem",
-	.id = 1,
-	.dev = { .platform_data = &pmem_gpu1_pdata },
-};
-
-static struct platform_device pmem_adsp_device = {
-	.name = "android_pmem",
-	.id = 2,
-	.dev = { .platform_data = &pmem_adsp_pdata },
-};
-
-static void __init android_pmem_set_platdata(void)
-{
-	pmem_pdata.start = (u32)s5p_get_media_memory_bank(S5P_MDEV_PMEM, 0);
-	pmem_pdata.size = (u32)s5p_get_media_memsize_bank(S5P_MDEV_PMEM, 0);
-
-	pmem_gpu1_pdata.start =
-		(u32)s5p_get_media_memory_bank(S5P_MDEV_PMEM_GPU1, 0);
-	pmem_gpu1_pdata.size =
-		(u32)s5p_get_media_memsize_bank(S5P_MDEV_PMEM_GPU1, 0);
-
-	pmem_adsp_pdata.start =
-		(u32)s5p_get_media_memory_bank(S5P_MDEV_PMEM_ADSP, 0);
-	pmem_adsp_pdata.size =
-		(u32)s5p_get_media_memsize_bank(S5P_MDEV_PMEM_ADSP, 0);
-}
-#endif
 
 struct platform_device wave_charger_device = {
 	.name	= "wave_charger",
@@ -2933,33 +2764,17 @@ static struct gpio_init_data wave_init_gpios[] = {
 
 	// GPH1 ----------------------------
 	{
-#if defined (CONFIG_SAMSUNG_CAPTIVATE)
-		.num	= S5PV210_GPH1(0),
-		.cfg	= S3C_GPIO_OUTPUT,
-		.val	= S3C_GPIO_SETPIN_NONE,
-		.pud	= S3C_GPIO_PULL_DOWN,
-		.drv	= S3C_GPIO_DRVSTR_1X,
-#else
 		.num	= S5PV210_GPH1(0),
 		.cfg	= S3C_GPIO_INPUT,
 		.val	= S3C_GPIO_SETPIN_NONE,
 		.pud	= S3C_GPIO_PULL_DOWN,
 		.drv	= S3C_GPIO_DRVSTR_1X,
-#endif
 	}, {
-#if defined (CONFIG_SAMSUNG_CAPTIVATE)
-		.num	= S5PV210_GPH1(1),
-		.cfg	= S3C_GPIO_OUTPUT,
-		.val	= S3C_GPIO_SETPIN_NONE,
-		.pud	= S3C_GPIO_PULL_DOWN,
-		.drv	= S3C_GPIO_DRVSTR_1X,
-#else
 		.num	= S5PV210_GPH1(1),
 		.cfg	= S3C_GPIO_INPUT,
 		.val	= S3C_GPIO_SETPIN_NONE,
 		.pud	= S3C_GPIO_PULL_DOWN,
 		.drv	= S3C_GPIO_DRVSTR_1X,
-#endif
 	}, {
 		.num	= S5PV210_GPH1(2),
 		.cfg	= S3C_GPIO_INPUT,
@@ -3338,19 +3153,11 @@ static struct gpio_init_data wave_init_gpios[] = {
 		.drv	= S3C_GPIO_DRVSTR_1X,
 #endif
 	}, {
-#if defined(CONFIG_SAMSUNG_CAPTIVATE) || defined(CONFIG_SAMSUNG_VIBRANT) || defined(CONFIG_SAMSUNG_GALAXYS)
-		.num	= S5PV210_GPJ2(6), // GPIO_EARPATH_SEL
-		.cfg	= S3C_GPIO_OUTPUT,
-		.val	= S3C_GPIO_SETPIN_ZERO,
-		.pud	= S3C_GPIO_PULL_NONE,
-		.drv	= S3C_GPIO_DRVSTR_1X,
-#else
 		.num	= S5PV210_GPJ2(6), // GPIO_EARPATH_SEL
 		.cfg	= S3C_GPIO_INPUT,
 		.val	= S3C_GPIO_SETPIN_NONE,
 		.pud	= S3C_GPIO_PULL_DOWN,
 		.drv	= S3C_GPIO_DRVSTR_1X,
-#endif
 	}, {
 		.num	= S5PV210_GPJ2(7), // GPIO_MASSMEMORY_EN
 		.cfg	= S3C_GPIO_OUTPUT,
@@ -3516,10 +3323,10 @@ static struct gpio_init_data wave_init_gpios[] = {
 		.drv	= S3C_GPIO_DRVSTR_1X,
 	}, {
 		.num	= S5PV210_MP03(7), // GPIO_PCM_SEL
-		.cfg	= S3C_GPIO_INPUT,
-		.val	= S3C_GPIO_SETPIN_NONE,
-		.pud	= S3C_GPIO_PULL_DOWN,
-		.drv	= S3C_GPIO_DRVSTR_1X,
+		.cfg	= S3C_GPIO_OUTPUT,
+		.val	= S3C_GPIO_SETPIN_ZERO,
+		.pud	= S3C_GPIO_PULL_NONE,
+		.drv	= S3C_GPIO_DRVSTR_2X,
 	},
 
 	// MP04 ----------------------------
@@ -3621,9 +3428,6 @@ void s3c_config_gpio_table(void)
 
 		s3c_gpio_set_drvstrength(gpio, wave_init_gpios[i].drv);
 	}
-#ifdef CONFIG_SAMSUNG_FASCINATE
-	s3c_gpio_set_drvstrength(S5PV210_GPH3(7), S3C_GPIO_DRVSTR_4X);
-#endif
 }
 
 #define S5PV210_PS_HOLD_CONTROL_REG (S3C_VA_SYS+0xE81C)
@@ -3657,7 +3461,6 @@ static void wave_power_off(void)
 	}
 }
 
-/* this table only for B4 board */
 static unsigned int wave_sleep_gpio_table[][3] = {
 
 	// GPA0 ---------------------------------------------------
@@ -3675,11 +3478,8 @@ static unsigned int wave_sleep_gpio_table[][3] = {
 	// GPA1 ---------------------------------------------------
 	{ S5PV210_GPA1(0), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_DOWN},
 	{ S5PV210_GPA1(1), S3C_GPIO_SLP_OUT0,	S3C_GPIO_PULL_NONE},
-#if defined(CONFIG_SAMSUNG_FASCINATE)
-	{ S5PV210_GPA1(2), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_DOWN},
-#else
+
     { S5PV210_GPA1(2), S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_NONE},
-#endif
 	{ S5PV210_GPA1(3), S3C_GPIO_SLP_OUT0,	S3C_GPIO_PULL_NONE},
 
 	// GPB ----------------------------------------------------
@@ -3805,49 +3605,39 @@ static unsigned int wave_sleep_gpio_table[][3] = {
 
 	// GPG0 ---------------------------------------------------
 	{ S5PV210_GPG0(0), S3C_GPIO_SLP_OUT0,	S3C_GPIO_PULL_NONE},
-#if defined (CONFIG_SAMSUNG_GALAXYS) || defined (CONFIG_SAMSUNG_GALAXYSB) || defined (CONFIG_MACH_WAVE)
-	{ S5PV210_GPG0(1), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_NONE},
-#else
 	{ S5PV210_GPG0(1), S3C_GPIO_SLP_OUT0,	S3C_GPIO_PULL_NONE},
-#endif
+
 #if defined (CONFIG_SAMSUNG_CAPTIVATE) || defined(CONFIG_SAMSUNG_FASCINATE)
   	{ S5PV210_GPG0(2), S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_NONE},	// GPIO_ALS_SCL_28V
 #else
   	{ S5PV210_GPG0(2), S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_DOWN},	// GPIO_ALS_SCL_28V
 #endif
-#if defined (CONFIG_SAMSUNG_GALAXYS) || defined (CONFIG_SAMSUNG_GALAXYSB) || defined (CONFIG_MACH_WAVE)
-	{ S5PV210_GPG0(3), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_NONE},
-	{ S5PV210_GPG0(4), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_NONE},
-	{ S5PV210_GPG0(5), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_NONE},
-	{ S5PV210_GPG0(6), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_NONE},
-#else
 	{ S5PV210_GPG0(3), S3C_GPIO_SLP_OUT0,	S3C_GPIO_PULL_NONE},
 	{ S5PV210_GPG0(4), S3C_GPIO_SLP_OUT0,	S3C_GPIO_PULL_NONE},
 	{ S5PV210_GPG0(5), S3C_GPIO_SLP_OUT0,	S3C_GPIO_PULL_NONE},
 	{ S5PV210_GPG0(6), S3C_GPIO_SLP_OUT0,	S3C_GPIO_PULL_NONE},
-#endif
 
 	// GPG1 ---------------------------------------------------
 	{ S5PV210_GPG1(0), S3C_GPIO_SLP_OUT0,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_CLK
-	{ S5PV210_GPG1(1), S3C_GPIO_SLP_OUT1,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_CMD
+	{ S5PV210_GPG1(1), S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_CMD
 	{ S5PV210_GPG1(2), S3C_GPIO_SLP_PREV,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_nRST
-	{ S5PV210_GPG1(3), S3C_GPIO_SLP_OUT1,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_D0
-	{ S5PV210_GPG1(4), S3C_GPIO_SLP_OUT1,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_D1
-	{ S5PV210_GPG1(5), S3C_GPIO_SLP_OUT1,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_D2
-	{ S5PV210_GPG1(6), S3C_GPIO_SLP_OUT1,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_D3
+	{ S5PV210_GPG1(3), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_D0
+	{ S5PV210_GPG1(4), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_D1
+	{ S5PV210_GPG1(5), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_D2
+	{ S5PV210_GPG1(6), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_WLAN_SDIO_D3
 
 	// GPG2 ---------------------------------------------------
 	{ S5PV210_GPG2(0), S3C_GPIO_SLP_OUT0,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_CLK
-	{ S5PV210_GPG2(1), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_CMD
+	{ S5PV210_GPG2(1), S3C_GPIO_SLP_OUT0,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_CMD
 #if defined (CONFIG_SAMSUNG_CAPTIVATE) || defined(CONFIG_SAMSUNG_FASCINATE)
   	{ S5PV210_GPG2(2), S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_NONE},	//GPIO_ALS_SDA_28V
 #else
   	{ S5PV210_GPG2(2), S3C_GPIO_SLP_INPUT,  S3C_GPIO_PULL_DOWN},	//GPIO_ALS_SDA_28V
 #endif
-	{ S5PV210_GPG2(3), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_D0
-	{ S5PV210_GPG2(4), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_D1
-	{ S5PV210_GPG2(5), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_D2
-	{ S5PV210_GPG2(6), S3C_GPIO_SLP_INPUT,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_D3
+	{ S5PV210_GPG2(3), S3C_GPIO_SLP_OUT0,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_D0
+	{ S5PV210_GPG2(4), S3C_GPIO_SLP_OUT0,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_D1
+	{ S5PV210_GPG2(5), S3C_GPIO_SLP_OUT0,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_D2
+	{ S5PV210_GPG2(6), S3C_GPIO_SLP_OUT0,   S3C_GPIO_PULL_NONE},	//GPIO_T_FLASH_D3
 
 	// GPG3 ---------------------------------------------------
 #if defined (CONFIG_SAMSUNG_VIBRANT)
@@ -4015,7 +3805,7 @@ static unsigned int wave_sleep_gpio_table[][3] = {
 	{ S5PV210_MP03(4), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_NONE},
 	{ S5PV210_MP03(5), S3C_GPIO_SLP_OUT1,	S3C_GPIO_PULL_NONE},
 	{ S5PV210_MP03(6), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_DOWN},
-	{ S5PV210_MP03(7), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_DOWN},
+	{ S5PV210_MP03(7), S3C_GPIO_SLP_OUT1,	S3C_GPIO_PULL_NONE},	//PCM_SEL
 
 	// MP04 ---------------------------------------------------
 	{ S5PV210_MP04(0), S3C_GPIO_SLP_INPUT,	S3C_GPIO_PULL_DOWN},
@@ -4086,12 +3876,13 @@ void s3c_config_sleep_gpio(void)
 #endif
 
 	/* setting the alive mode registers */
-	s3c_gpio_cfgpin(S5PV210_GPH0(1), S3C_GPIO_INPUT);
-#if defined(CONFIG_SAMSUNG_FASCINATE)
-	s3c_gpio_setpull(S5PV210_GPH0(1), S3C_GPIO_PULL_DOWN);
-#else
-	s3c_gpio_setpull(S5PV210_GPH0(1), S3C_GPIO_PULL_NONE);
+#if defined(CONFIG_SAMSUNG_FASCINATE) || defined(CONFIG_SAMSUNG_CAPTIVATE)
+	s3c_gpio_cfgpin(S5PV210_GPH0(0), S3C_GPIO_INPUT);
+	s3c_gpio_setpull(S5PV210_GPH0(0), S3C_GPIO_PULL_DOWN);
 #endif
+
+	s3c_gpio_cfgpin(S5PV210_GPH0(1), S3C_GPIO_INPUT);
+	s3c_gpio_setpull(S5PV210_GPH0(1), S3C_GPIO_PULL_NONE);
 
 	s3c_gpio_cfgpin(S5PV210_GPH0(3), S3C_GPIO_OUTPUT);
 	s3c_gpio_setpull(S5PV210_GPH0(3), S3C_GPIO_PULL_NONE);
@@ -4110,48 +3901,15 @@ void s3c_config_sleep_gpio(void)
 	s3c_gpio_setpull(S5PV210_GPH0(7), S3C_GPIO_PULL_UP);
 #endif
 
-#if defined(CONFIG_SAMSUNG_FASCINATE)
-	s3c_gpio_cfgpin(S5PV210_GPH1(0), S3C_GPIO_OUTPUT);
-	s3c_gpio_setpull(S5PV210_GPH1(0), S3C_GPIO_PULL_DOWN);
-	gpio_set_value(S5PV210_GPH1(0), 0);
-#elif defined(CONFIG_SAMSUNG_CAPTIVATE) && defined (CONFIG_A1026) // Dummy config for Audience chip - which we aren't using at the moment
-	s3c_gpio_cfgpin(S5PV210_GPH1(0), S3C_GPIO_OUTPUT);
-	s3c_gpio_setpull(S5PV210_GPH1(0), S3C_GPIO_PULL_NONE);
-	gpio_set_value(S5PV210_GPH1(0), 1);
-#else
 	s3c_gpio_cfgpin(S5PV210_GPH1(0), S3C_GPIO_INPUT);
-#endif
 	s3c_gpio_setpull(S5PV210_GPH1(0), S3C_GPIO_PULL_DOWN);
-#if defined(CONFIG_SAMSUNG_FASCINATE)
-	gpio_set_value(S5PV210_GPH1(0), 0);
-#endif
 
-#if defined(CONFIG_SAMSUNG_CAPTIVATE) && defined (CONFIG_A1026)
-	s3c_gpio_cfgpin(S5PV210_GPH1(1), S3C_GPIO_OUTPUT);
-	s3c_gpio_setpull(S5PV210_GPH1(1), S3C_GPIO_PULL_DOWN);
-	gpio_set_value(S5PV210_GPH1(1), 1);
-#else
 	s3c_gpio_cfgpin(S5PV210_GPH1(1), S3C_GPIO_INPUT);
 	s3c_gpio_setpull(S5PV210_GPH1(1), S3C_GPIO_PULL_DOWN);
-#endif
 
-#if defined(CONFIG_SAMSUNG_CAPTIVATE) && defined (CONFIG_A1026)
-	s3c_gpio_cfgpin(S5PV210_GPH1(2), S3C_GPIO_OUTPUT);
-	s3c_gpio_setpull(S5PV210_GPH1(2), S3C_GPIO_PULL_DOWN);
-	gpio_set_value(S5PV210_GPH1(2), 1);
-#else
 	s3c_gpio_cfgpin(S5PV210_GPH1(2), S3C_GPIO_INPUT);
 	s3c_gpio_setpull(S5PV210_GPH1(2), S3C_GPIO_PULL_DOWN);
-#endif
 
-#if defined(CONFIG_SAMSUNG_FASCINATE)
-	s3c_gpio_cfgpin(S5PV210_GPH1(4), S3C_GPIO_OUTPUT);
-	s3c_gpio_setpull(S5PV210_GPH1(4), S3C_GPIO_PULL_NONE);
-	gpio_set_value(S5PV210_GPH1(4), 0);
-
-	s3c_gpio_cfgpin(S5PV210_GPH1(5), S3C_GPIO_INPUT);
-	s3c_gpio_setpull(S5PV210_GPH1(5), S3C_GPIO_PULL_DOWN);
-#else
 	s3c_gpio_cfgpin(S5PV210_GPH1(4), S3C_GPIO_INPUT);
 	s3c_gpio_setpull(S5PV210_GPH1(4), S3C_GPIO_PULL_DOWN);
 
@@ -4161,12 +3919,8 @@ void s3c_config_sleep_gpio(void)
 	s3c_gpio_cfgpin(S5PV210_GPH1(6), S3C_GPIO_INPUT);
 	s3c_gpio_setpull(S5PV210_GPH1(6), S3C_GPIO_PULL_DOWN);
 
-#endif
-
-#if !defined(CONFIG_SAMSUNG_CAPTIVATE)
 	s3c_gpio_cfgpin(S5PV210_GPH1(7), S3C_GPIO_INPUT);
 	s3c_gpio_setpull(S5PV210_GPH1(7), S3C_GPIO_PULL_NONE);
-#endif
 
 	s3c_gpio_cfgpin(S5PV210_GPH2(0), S3C_GPIO_INPUT);
 	s3c_gpio_setpull(S5PV210_GPH2(0), S3C_GPIO_PULL_DOWN);
@@ -4516,15 +4270,15 @@ static struct platform_device *wave_devices[] __initdata = {
 	&s5pv210_device_iis0,
 	&s3c_device_wdt,
 
+#ifdef CONFIG_FB_S3C
+	&s3c_device_fb,
+#endif
+
 #ifdef CONFIG_VIDEO_MFC50
 	&s3c_device_mfc,
 #endif
 #ifdef	CONFIG_S5P_ADC
 	&s3c_device_adc,
-#endif
-
-#ifdef CONFIG_FB_S3C
-	&s3c_device_fb,
 #endif
 #ifdef CONFIG_VIDEO_FIMC
 	&s3c_device_fimc0,
@@ -4539,9 +4293,8 @@ static struct platform_device *wave_devices[] __initdata = {
 	&s3c_device_g3d,
 	&s3c_device_lcd,
 
-#ifdef CONFIG_FB_S3C_TL2796
-	&s3c_display_spi_gpio,
-#endif
+	&s3c_device_spi_gpio,
+
 	&sec_device_jack,
 
 	&s3c_device_i2c0,
@@ -4594,7 +4347,7 @@ static struct platform_device *wave_devices[] __initdata = {
 	&s3c_device_hsmmc3,
 #endif
 #ifdef CONFIG_VIDEO_TV20
-        &s5p_device_tvout,
+	&s5p_device_tvout,
 #endif
 	&wave_charger_device,
 
@@ -4608,11 +4361,6 @@ static struct platform_device *wave_devices[] __initdata = {
 	&s5pv210_pd_mfc,
 #endif
 
-#ifdef CONFIG_ANDROID_PMEM
-	&pmem_device,
-	&pmem_gpu1_device,
-	&pmem_adsp_device,
-#endif
 
 #ifdef CONFIG_HAVE_PWM
 	&s3c_device_timer[0],
@@ -4632,6 +4380,16 @@ static struct platform_device *wave_devices[] __initdata = {
 	&samsung_asoc_dma,
 };
 
+static void check_bigmem(void) {
+	int bootmode = __raw_readl(S5P_INFORM6);
+	if (bootmode < 3) {
+		wave_media_devs[2].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0_BM;
+		wave_media_devs[4].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0_BM;
+		wave_media_devs[0].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0_XL; 
+		wave_media_devs[1].memsize =  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1_XL;
+	}
+}
+
 static void __init wave_map_io(void)
 {
 	s5p_init_io(NULL, 0, S5P_VA_CHIPID);
@@ -4641,6 +4399,7 @@ static void __init wave_map_io(void)
 	#ifndef CONFIG_S5P_HIGH_RES_TIMERS
 		s5p_set_timer_source(S5P_PWM3, S5P_PWM4);
 	#endif
+	check_bigmem();
 	s5p_reserve_bootmem(wave_media_devs,
 		ARRAY_SIZE(wave_media_devs), S5P_RANGE_MFC);
 #ifdef CONFIG_MTD_ONENAND
@@ -4665,8 +4424,8 @@ static void __init wave_fixup(struct machine_desc *desc,
 	mi->bank[1].size = 255 * SZ_1M;
 	mi->nr_banks = 2;
 
-	ram_console_start = mi->bank[1].start + mi->bank[1].size + SZ_1K; /* 1K to preserve Bada BootSharedInfo */
-	ram_console_size = SZ_1M - SZ_4K - SZ_1K; /* 4K for PM debug scratchpad  */
+	ram_console_start = mi->bank[1].start + mi->bank[1].size;
+	ram_console_size = SZ_1M - SZ_4K;
 
 	pm_debug_scratchpad = ram_console_start + ram_console_size;
 }
@@ -4806,7 +4565,6 @@ static void wave_pm_restart(char mode, const char *cmd)
 // Ugly hack to inject parameters (e.g. device serial, bootmode) into /proc/cmdline
 static void __init wave_inject_cmdline(void) {
 	char *new_command_line;
-	int bootmode = __raw_readl(S5P_INFORM6);
 	int size;
 
 	size = strlen(boot_command_line);
@@ -4817,10 +4575,7 @@ static void __init wave_inject_cmdline(void) {
 
 	// Only write bootmode when less than 10 to prevent confusion with watchdog
 	// reboot (0xee = 238)
-	if (bootmode < 10) {
-		size += sprintf(new_command_line + size, " bootmode=%d", bootmode);
-	}
-
+	size += sprintf(new_command_line + size, "");
 	saved_command_line = new_command_line;
 }
 
@@ -4888,9 +4643,6 @@ static void __init wave_machine_init(void)
 	/*initialise the gpio's*/
 	wave_init_gpio();
 
-#ifdef CONFIG_ANDROID_PMEM
-	android_pmem_set_platdata();
-#endif
 
 
 	samsung_keypad_set_platdata(&wave_keypad_data);
@@ -4939,19 +4691,14 @@ static void __init wave_machine_init(void)
 	i2c_register_board_info(12, i2c_devs12, ARRAY_SIZE(i2c_devs12));
 
 	/* panel */
-#ifdef CONFIG_FB_S3C_TL2796
-	if(machine_is_wave()) {
-		spi_register_board_info(tl2796_spi_board_info, ARRAY_SIZE(tl2796_spi_board_info));
-		s3cfb_set_platdata(&tl2796_data);
-	}
-#endif
 
-#ifdef CONFIG_FB_S3C_LG4573
-	if(machine_is_wave2()) {
-		spi_register_board_info(lg4573_spi_board_info, ARRAY_SIZE(lg4573_spi_board_info));
-		s3cfb_set_platdata(&lg4573_data);
-	}
-#endif
+
+		spi_register_board_info(spi_board_info, ARRAY_SIZE(spi_board_info));
+		s3cfb_set_platdata(&tl2796_data);
+
+
+
+
 
 #if defined(CONFIG_S5P_ADC)
 	s3c_adc_set_platdata(&s3c_adc_platform);
@@ -4999,8 +4746,6 @@ static void __init wave_machine_init(void)
 
 	regulator_has_full_constraints();
 
-	register_reboot_notifier(&wave_reboot_notifier);
-
 	wave_switch_init();
 
 	//gps_gpio_init();
@@ -5009,6 +4754,8 @@ static void __init wave_machine_init(void)
 
 	wave_init_wifi_mem();
 
+	//onenand_init();
+	
 	/* write something into the INFORM6 register that we can use to
 	 * differentiate an unclear reboot from a clean reboot (which
 	 * writes a small integer code to INFORM6).
@@ -5141,19 +4888,6 @@ void s3c_setup_uart_cfg_gpio(unsigned char port)
 EXPORT_SYMBOL(s3c_setup_uart_cfg_gpio);
 
 MACHINE_START(WAVE, "wave")
-	.boot_params	= S5P_PA_SDRAM + 0x100,
-	.fixup		= wave_fixup,
-	.init_irq	= s5pv210_init_irq,
-	.map_io		= wave_map_io,
-	.init_machine	= wave_machine_init,
-#if	defined(CONFIG_S5P_HIGH_RES_TIMERS)
-	.timer		= &s5p_systimer,
-#else
-	.timer		= &s3c24xx_timer,
-#endif
-MACHINE_END
-
-MACHINE_START(WAVE2, "wave2")
 	.boot_params	= S5P_PA_SDRAM + 0x100,
 	.fixup		= wave_fixup,
 	.init_irq	= s5pv210_init_irq,
