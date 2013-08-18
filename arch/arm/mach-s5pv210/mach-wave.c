@@ -132,6 +132,27 @@ struct wifi_mem_prealloc {
 	unsigned long size;
 };
 
+static int wave_notifier_call(struct notifier_block *this,
+					unsigned long code, void *_cmd)
+{
+	int mode = REBOOT_MODE_NONE;
+
+	if ((code == SYS_RESTART) && _cmd) {
+		if (!strcmp((char *)_cmd, "recovery"))
+				mode = 2;
+		else {
+			if (!strcmp((char *)_cmd, "bigmem"))
+				mode = 4;
+			else
+			if (!strcmp((char *)_cmd, ""))
+				mode = 0;
+		}
+	}
+	__raw_writel(mode, S5P_INFORM6);
+
+	return NOTIFY_DONE;
+}
+
 static void uart_switch_init(void)
 {
 	int ret;
@@ -238,10 +259,7 @@ static struct s3cfb_lcd s6e63m0 = {
 	},
 };
 
-#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0_BM (0 * SZ_1K)
-#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC2_BM (0 * SZ_1K)
-#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0_XL (0 * SZ_1K)
-#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1_XL (0 * SZ_1K)
+#define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_BM (0 * SZ_1K)
 
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0 (4000 * SZ_1K)
 #define  S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC2 (0 * SZ_1K)
@@ -4382,11 +4400,17 @@ static struct platform_device *wave_devices[] __initdata = {
 
 static void check_bigmem(void) {
 	int bootmode = __raw_readl(S5P_INFORM6);
-	if (bootmode < 3) {
-		wave_media_devs[2].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0_BM;
-		wave_media_devs[4].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0_BM;
-		wave_media_devs[0].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0_XL; 
-		wave_media_devs[1].memsize =  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1_XL;
+	if (bootmode == 4) {
+		wave_media_devs[2].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_BM;
+		wave_media_devs[4].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_BM;
+		wave_media_devs[0].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_BM; 
+		wave_media_devs[1].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_BM;
+	}
+	else {
+		wave_media_devs[2].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC0;
+		wave_media_devs[4].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_FIMC2;
+		wave_media_devs[0].memsize = S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC0; 
+		wave_media_devs[1].memsize =  S5PV210_VIDEO_SAMSUNG_MEMSIZE_MFC1;
 	}
 }
 
