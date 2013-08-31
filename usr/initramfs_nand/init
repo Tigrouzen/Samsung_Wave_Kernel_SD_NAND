@@ -6,21 +6,19 @@ export PATH=/
 # set busybox location, save busybox as we will move directories
 /ics_rec_init/sbin/busybox cp /ics_rec_init/sbin/recovery /busybox
 BB="/busybox"
-
 # initialize working dir and log
 $BB cd /
 $BB date >>boot.txt
 exec >>boot.txt 2>&1
-
 $BB rm init
 $BB mkdir proc
 $BB mkdir sys
 $BB mkdir system 
 $BB mkdir cache
-$BB mkdir data 
+$BB mkdir data
 $BB mkdir /dev
 $BB mkdir /dev/block
-$BB mknod /dev/block/zram0 b 253 0 
+$BB mknod /dev/null c 1 3
 $BB mknod /dev/block/mmcblk0 b 179 0
 $BB mknod /dev/block/mmcblk0p1 b 179 1
 $BB mknod /dev/block/mmcblk0p2 b 179 2
@@ -30,42 +28,66 @@ $BB mount -t proc proc /proc
 $BB mount -t sysfs sysfs /sys
 
 $BB mv /files/init /
+# Let's make real swap 
+if ! $BB fdisk -l /dev/block/mmcblk0 | $BB grep "/dev/block/mmcblk0p4"
 
-$BB sleep 1
+then
+$BB mkdir bada
+$BB mkdir temp
+$BB mount -t vfat /dev/block/mmcblk0p1 /temp
+$BB mount -t vfat /dev/block/mmcblk0p3 /bada
+$BB cp -rfp /bada/appex /temp/
+$BB cp -rfp /bada/bada /temp/
+$BB umount /dev/block/mmcblk0p3
+$BB umount /dev/block/mmcblk0p1
 
-$BB mount -t ext4 -o noatime,nodiratime,nosuid,nodev,barrier=0,noauto_da_alloc,data=writeback /dev/block/mmcblk0p3 /data
-$BB mount -t ext4 -o noatime,nodiratime,nosuid,nodev,barrier=0,noauto_da_alloc,data=writeback /dev/block/mmcblk0p1 /cache
-$BB mount -t ext4 -o noatime,nodiratime,barrier=0,noauto_da_alloc,data=writeback /dev/block/mmcblk0p2 /system
-$BB mkdir -p /data/radio
-$BB chmod -R 0777 /data/radio
-$BB chown radio:radio /data/radio
-$BB mkdir /data/radio/.efs_private
-$BB chown radio:radio /data/radio/.efs_private
-$BB mkdir -p /data/local/devil 
-$BB echo 250000000 > /sys/block/zram0/disksize
-$BB mkswap /dev/block/zram0
-$BB swapon /dev/block/zram0
-$BB cat /proc/cmdline
-if $BB grep -q bootmode=2 /proc/cmdline ; then
-    $BB rm -rf /etc
-    $BB mv /ics_rec_init/* /
-    else
-#Bigmem
-if $BB grep -q bootmode=10 /proc/cmdline ; then
-   $BB echo 3 > /sys/kernel/bigmem/enable
-   $BB touch /data/local/devil/bigmem
-   $BB echo 3 > /data/local/devil/bigmem
+$BB fdisk /dev/block/mmcblk0 << EOF > /dev/null 2>&1
+d
+3
+n
+p
+3
+
++700M
+t
+3
+6
+n
+p
+
+
+w
+EOF
+$BB mkswap /dev/block/mmcblk0p4
+$BB mkfs.vfat /dev/block/mmcblk0p3
+$BB mount -t vfat /dev/block/mmcblk0p3 /bada
+$BB mount -t vfat /dev/block/mmcblk0p1 /temp
+$BB mv /temp/appex /bada/
+$BB mv /temp/bada /bada/
+$BB umount /dev/block/mmcblk0p3
+$BB umount /dev/block/mmcblk0p1
+$BB rm -r bada
+$BB rm -r temp
 fi
-    $BB rm -rf /etc
+
+$BB echo 0 > /sys/block/mmcblk0/queue/read_ahead_kb
+$BB echo 0 > /sys/block/mmcblk1/queue/read_ahead_kb 
+$BB swapon /dev/block/mmcblk0p4
+$BB echo 100 > /proc/sys/vm/swappiness
+$BB cat /proc/cmdline
+if $BB grep -q recovery /proc/cmdline || $BB grep -q bootmode=2 /proc/cmdline ; then
+    $BB mv /ics_rec_init/* /
+      elif $BB grep -q bigmem /proc/cmdline || $BB grep -q bootmode=3 /proc/cmdline ; then
+      $BB mv /ics_rom_init/* /	
+     else
     $BB mv /ics_init/* /
 fi
-
-#$BB umount /sys
-#$BB umount /proc
 $BB rm -rf /files
 $BB rm -rf /ics_init
 $BB rm -rf /ics_rec_init
-#$BB rm -fr /dev/*
+$BB echo 0 > /sys/devices/virtual/misc/fsynccontrol/fsync_enabled
+$BB echo 1 > /sys/kernel/dyn_fsync/Dyn_fsync_active
+$BB date >>boot.txt
 $BB rm /busybox
 export PATH="${_PATH}"
 exec /init
